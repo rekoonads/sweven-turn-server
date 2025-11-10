@@ -1,0 +1,9 @@
+dist/
+*.exe
+node_modules/
+*.tsbuildinfo
+secret/
+pid
+service.sh
+turn
+main
