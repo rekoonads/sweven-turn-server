@@ -37,14 +37,64 @@ func init() {
 }
 
 func main() {
+	// Start HTTP health check endpoint FIRST for Railway
+	// This ensures the service appears healthy even during initialization
+	healthPort := os.Getenv("PORT")
+	if healthPort == "" {
+		healthPort = "8080" // Default health check port
+	}
+
+	serverReady := false
+	serverError := false
+	var serverErrorMsg string
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if serverError {
+			w.Write([]byte("TURN server failed to start: " + serverErrorMsg))
+		} else if serverReady {
+			w.Write([]byte("TURN server is running"))
+		} else {
+			w.Write([]byte("TURN server is initializing..."))
+		}
+	})
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		status := "initializing"
+		if serverError {
+			status = "error"
+		} else if serverReady {
+			status = "healthy"
+		}
+		w.Write([]byte(fmt.Sprintf(`{"status":"%s","service":"turn-server"}`, status)))
+	})
+
+	go func() {
+		fmt.Printf("Health check endpoint started on port %s\n", healthPort)
+		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
+			log.Printf("Health check server error: %v", err)
+		}
+	}()
+
+	// Give health check server time to start
+	time.Sleep(100 * time.Millisecond)
+
 	// Get TURN credentials from environment variables
 	turnUsername := os.Getenv("TURN_USERNAME")
 	turnPassword := os.Getenv("TURN_PASSWORD")
 	publicIP := os.Getenv("PUBLIC_IP")
 	portStr := os.Getenv("TURN_PORT")
 
+	// Check if required environment variables are missing
 	if turnUsername == "" || turnPassword == "" {
-		panic(fmt.Errorf("TURN_USERNAME and TURN_PASSWORD environment variables are required"))
+		errorMsg := "TURN_USERNAME and TURN_PASSWORD must be set"
+		log.Println(errorMsg)
+		serverError = true
+		serverErrorMsg = errorMsg
+		
+		// Keep the application running so health check endpoint stays alive
+		select {} // Block forever
 	}
 
 	if publicIP == "" {
@@ -80,42 +130,27 @@ func main() {
 
 	s, err := edgeturn.SetupTurn(publicIP, turnUsername, turnPassword, port, min, max)
 	if err != nil {
-		panic(err)
-	}
+		errorMsg := fmt.Sprintf("TURN server initialization error: %v", err)
+		log.Println(errorMsg)
+		log.Println("Health check will continue to run, but TURN functionality is disabled")
+		serverError = true
+		serverErrorMsg = errorMsg
+		
+		// Keep the application running so health check endpoint stays alive
+		select {} // Block forever
+	} else {
+		fmt.Println("TURN server started successfully")
+		serverReady = true
+		
+		// Block until user sends SIGINT or SIGTERM
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		<-sigs
 
-	fmt.Println("TURN server started successfully")
+		fmt.Println("Shutting down TURN server...")
 
-	// Start HTTP health check endpoint for Railway
-	healthPort := os.Getenv("PORT")
-	if healthPort == "" {
-		healthPort = "8080" // Default health check port
-	}
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("TURN server is running"))
-	})
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy","service":"turn-server"}`))
-	})
-
-	go func() {
-		fmt.Printf("Health check endpoint started on port %s\n", healthPort)
-		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
-			log.Printf("Health check server error: %v", err)
+		if err = s.Close(); err != nil {
+			log.Panic(err)
 		}
-	}()
-
-	// Block until user sends SIGINT or SIGTERM
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
-
-	fmt.Println("Shutting down TURN server...")
-
-	if err = s.Close(); err != nil {
-		log.Panic(err)
 	}
 }
