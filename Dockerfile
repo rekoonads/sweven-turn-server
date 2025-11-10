@@ -24,6 +24,9 @@ WORKDIR /root/
 
 COPY --from=builder /app/turn-server .
 
+# HTTP health check port (Railway uses this)
+EXPOSE 8080
+
 # TURN server uses UDP port 3478 and relay ports 60000-65535
 EXPOSE 3478/udp
 EXPOSE 60000-65535/udp

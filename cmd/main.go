@@ -4,6 +4,7 @@ import (
 	"edgeturn"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -83,6 +84,29 @@ func main() {
 	}
 
 	fmt.Println("TURN server started successfully")
+
+	// Start HTTP health check endpoint for Railway
+	healthPort := os.Getenv("PORT")
+	if healthPort == "" {
+		healthPort = "8080" // Default health check port
+	}
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("TURN server is running"))
+	})
+
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"healthy","service":"turn-server"}`))
+	})
+
+	go func() {
+		fmt.Printf("Health check endpoint started on port %s\n", healthPort)
+		if err := http.ListenAndServe(":"+healthPort, nil); err != nil {
+			log.Printf("Health check server error: %v", err)
+		}
+	}()
 
 	// Block until user sends SIGINT or SIGTERM
 	sigs := make(chan os.Signal, 1)
