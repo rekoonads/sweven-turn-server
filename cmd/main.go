@@ -4,6 +4,7 @@ import (
 	"edgeturn"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -97,7 +98,11 @@ func main() {
 		select {} // Block forever
 	}
 
-	if publicIP == "" {
+	// Validate PUBLIC_IP - must be a valid IP address, not a domain
+	if publicIP == "" || net.ParseIP(publicIP) == nil {
+		if publicIP != "" && publicIP != "0.0.0.0" {
+			log.Printf("WARNING: PUBLIC_IP '%s' is not a valid IP address, using 0.0.0.0", publicIP)
+		}
 		publicIP = "0.0.0.0" // Default to all interfaces
 	}
 
